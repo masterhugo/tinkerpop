@@ -29,6 +29,7 @@ image::https://raw.githubusercontent.com/apache/tinkerpop/master/docs/static/ima
 * Fixed `gremlin-go` to report a malformed or truncated GraphBinary response as a deserialization error rather than a bare decoder message.
 * Made `TinkerGraph` an interface and renamed the in-memory implementation to `TinkerMemoryGraph`; `TinkerGraph.open()` and `gremlin.graph=...TinkerGraph` behave as before. *(breaking)*
 * Renamed `TinkerTransactionGraph` to `TinkerStorageGraph`. *(breaking)*
+* Added native `asyncio` support to `gremlin-python` (`AsyncClient`, `AsyncDriverRemoteConnection`, `async_traversal()`, `AsyncGraphTraversal`, `AsyncResultSet`, and `AsyncTransaction`) over HTTP streaming without requiring `nest_asyncio` or thread pools.
 
 [[release-4-0-0-beta-3]]
 === TinkerPop 4.0.0-beta.3 (July 20, 2026)

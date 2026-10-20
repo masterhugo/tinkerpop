@@ -4014,30 +4014,83 @@ what is intended by Gremlin, since it follows Python's behavior.
 keyed by element id. The result is not a live `Graph` instance: mutating the dicts has no effect on the source
 graph, and it cannot be passed to `traversal().with(...)`. To re-query subgraph elements against the original
 graph, extract their `id` and use `g.V(id)` / `g.E(id)` on the original `GraphTraversalSource`.
-* Use of the aiohttp library in the default transport requires the use of asyncio's event loop to run the async functions.
-This can be an issue in situations where the application calling Gremlin-Python is already using an event loop.
-Certain types of event loops can be patched using nest-asyncio which allows Gremlin-Python to proceed without an error like
-"Cannot run the event loop while another loop is running". This is the preferred approach to avoiding the issue and can be
-enabled by passing `call_from_event_loop=True` to the `AiohttpTransport` class.
+* The synchronous `DriverRemoteConnection` and `Client` classes manage their own internal event loop via `aiohttp`,
+which raises `"Cannot run the event loop while another loop is running"` if called directly from an already-running
+`asyncio` event loop. For applications running inside an `asyncio` event loop (such as FastAPI/`uvloop`, Jupyter
+notebooks, or async AWS Lambda handlers), use the native `asyncio` API described in
+<<gremlin-python-asyncio,Asyncio Support>> (`AsyncDriverRemoteConnection`, `AsyncClient`, and `async_traversal()`),
+which runs directly on the caller's event loop without `nest_asyncio` or thread pools.
 
-+
-However, in situations where the loop cannot be patched (e.g. uvloop), then the current suggested workaround is to run
-Gremlin-Python in a separate thread. This is not ideal for asynchronous web servers as the number of concurrent connections
-will be limited by the number of threads the system can handle. The following snippet shows how Gremlin-Python can be called
-from asynchronous code using a thread.
+[[gremlin-python-asyncio]]
+=== Asyncio Support
 
-+
+Gremlin-Python provides a native `asyncio` API that runs directly on the caller's running event loop without
+`nest_asyncio` or background `ThreadPoolExecutor` threads. It is compatible with standard `asyncio` loops as well as
+`uvloop`, FastAPI, Jupyter notebooks, and async serverless handlers.
+
+==== Async Traversals
+
+Use `AsyncDriverRemoteConnection` together with `async_traversal().with_(...)` to construct an
+`AsyncGraphTraversalSource`. All terminal steps (`to_list()`, `to_set()`, `next()`, `iterate()`, `has_next()`,
+`next_traverser()`) are coroutines and must be awaited, and traversals also support `async for` streaming:
+
 [source,python]
 ----
-def print_vertices():
-    g = traversal().with(DriverRemoteConnection("http://localhost:8182/gremlin"))
-    # Do your traversal.
+from gremlin_python.driver.async_driver_remote_connection import AsyncDriverRemoteConnection
+from gremlin_python.driver.async_graph_traversal import async_traversal
 
-async def run_in_thread():
-    running_loop = asyncio.get_running_loop()
+async with AsyncDriverRemoteConnection('http://localhost:8182/gremlin', 'g') as rc:
+    g = async_traversal().with_(rc)
 
-    with ThreadPoolExecutor() as pool:
-        await running_loop.run_in_executor(pool, print_vertices)
+    # Await terminal steps
+    await g.add_v('person').property('name', 'marko').iterate()
+    names = await g.V().has_label('person').values('name').to_list()
+    first = await g.V().has_label('person').next()
+
+    # Stream results incrementally with async for
+    async for vertex in g.V():
+        print(vertex)
+----
+
+==== Async Client
+
+For submitting `gremlin-lang` strings directly, use `AsyncClient`. `await client.submit(...)` returns an
+`AsyncResultSet` that supports `await rs.all()`, `await rs.one()`, and `async for item in rs`:
+
+[source,python]
+----
+from gremlin_python.driver.async_client import AsyncClient
+
+async with AsyncClient('http://localhost:8182/gremlin', 'g') as client:
+    rs = await client.submit("g.V().values('name')")
+    names = await rs.all()
+
+    rs_stream = await client.submit("g.V()")
+    async for vertex in rs_stream:
+        print(vertex)
+----
+
+==== Async Transactions
+
+HTTP transactions are supported through `g.tx()` (returning an `AsyncTransaction`) and `await g.execute_in_tx(...)`:
+
+[source,python]
+----
+async with AsyncDriverRemoteConnection('http://localhost:8182/gremlin', 'g') as rc:
+    g = async_traversal().with_(rc)
+
+    # Explicit transaction lifecycle
+    tx = g.tx()
+    gtx = await tx.begin()
+    await gtx.add_v('person').property('name', 'alice').iterate()
+    await tx.commit()
+
+    # Managed transaction lifecycle
+    async def create_person(gtx):
+        await gtx.add_v('person').property('name', 'bob').iterate()
+        return await gtx.V().has('person', 'name', 'bob').count().next()
+
+    count = await g.execute_in_tx(create_person)
 ----
 
 [[gremlin-python-examples]]
@@ -4102,6 +4155,8 @@ Run the examples:
 python connections.py
 python basic_gremlin.py
 python modern_traversals.py
+python async_connections.py
+python async_traversals.py
 ----
 
 [[gremlin-python-pdt]]
